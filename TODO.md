@@ -1,0 +1,2 @@
+Todo
+- Seq Validation
