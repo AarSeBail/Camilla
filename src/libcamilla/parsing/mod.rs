@@ -1,7 +1,7 @@
 use std::io::Read;
 use std::marker::PhantomData;
 
-use debruijn::dna_string::DnaString;
+use crate::structures::sequence::ReadSeq;
 
 pub mod fastq;
 
@@ -36,18 +36,5 @@ impl<R: Read + Send, P: SeqParser<R, P>> Iterator for SeqIter<R, P> {
                 Some(Ok(s)) => return Some(s),
             }
         }
-    }
-}
-
-pub struct ReadSeq {
-    pub name: String,
-    pub sequence: String,
-    pub separator: Option<String>,
-    pub quality: Option<String>,
-}
-
-impl ReadSeq {
-    fn packed_dna(self) -> Vec<DnaString> {
-        DnaString::from_dna_only_string(self.sequence.as_str())
     }
 }

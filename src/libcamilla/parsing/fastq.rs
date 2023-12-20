@@ -2,7 +2,8 @@ use std::io::{BufRead, BufReader, Read};
 use std::mem;
 use std::ops::Deref;
 
-use super::{SeqParser, SeqIter, ReadSeq};
+use super::{SeqIter, SeqParser};
+use crate::structures::sequence::ReadSeq;
 
 pub struct FastqParser<R: Read + Send> {
     reader: BufReader<R>,
@@ -93,7 +94,7 @@ impl<R: Read + Send> SeqParser<R, FastqParser<R>> for FastqParser<R> {
                 name: name,
                 sequence: seq,
                 separator: Some(sep),
-                quality: Some(qual)
+                quality: Some(qual),
             }))
         }
     }
