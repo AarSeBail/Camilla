@@ -9,8 +9,13 @@ name = "libcamilla"
 path = "src/libcamilla/lib.rs"
 
 [[bin]]
-name = "camilla"
+name = "Camilla"
 path = "src/main.rs"
 
 [dependencies]
 bitvec = "1.0.1"
+rand = { version = "0.8.5", features = ["std_rng"] }
+wyz = "0.5"
+
+[profile.release]
+debug = true

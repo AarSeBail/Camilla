@@ -1,7 +1,6 @@
+use crate::structures::sequence::read::ReadSeq;
 use std::io::Read;
 use std::marker::PhantomData;
-
-use crate::structures::sequence::ReadSeq;
 
 pub mod fastq;
 

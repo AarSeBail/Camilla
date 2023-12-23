@@ -1,0 +1,248 @@
+use std::{
+    mem::ManuallyDrop,
+    ops::{Deref, DerefMut},
+};
+use std::ops::Index;
+
+use bitvec::{
+    order::Msb0,
+    ptr::{BitRef, Const, Mut, Mutability},
+    slice::BitSliceIndex,
+    vec::BitVec,
+    view::BitView,
+};
+
+
+/*
+Sequence as read by fastx parser.
+ */
+pub struct ReadSeq {
+    pub name: String,
+    pub sequence: String,
+    pub separator: Option<String>,
+    pub quality: Option<String>,
+}
+
+impl ReadSeq {
+    /*
+    Conversion from a read to a packed sequence
+     */
+    pub fn pack(&self) -> PackedSeq {
+        let seq = &self.sequence;
+
+        let mut res = PackedSeq {
+            ones: BitVec::with_capacity((seq.len() + 63) / 64),
+            twos: BitVec::with_capacity((seq.len() + 63) / 64),
+            len: seq.len(),
+        };
+
+        let mut chunks = seq.as_bytes().chunks_exact(64);
+
+        for chunk in chunks.by_ref() {
+            if let Some(d) = chunk.into_iter().map(ascii_to_packed).reduce(|mut acc, b| {
+                acc.0 = 2*acc.0 | b.0;
+                acc.1 = 2*acc.1 | b.1;
+                acc
+            }){
+                res.ones.extend_from_bitslice(&d.0.view_bits::<Msb0>());
+                res.twos.extend_from_bitslice(&d.1.view_bits::<Msb0>());
+            }
+        } // TODO: Try SimdInt::reduce_or
+
+        let rem = chunks.remainder();
+
+        if let Some(d) = rem.into_iter().map(ascii_to_packed).reduce(|mut acc, b| {
+            acc.0 = 2*acc.0 | b.0;
+            acc.1 = 2*acc.1 | b.1;
+            acc
+        }){
+            res.ones.extend_from_bitslice(&d.0.view_bits::<Msb0>()[64-rem.len()..64]);
+            res.twos.extend_from_bitslice(&d.1.view_bits::<Msb0>()[64-rem.len()..64]);
+        }
+
+        res
+    }
+}
+
+pub struct PackedSeq {
+    pub ones: BitVec<usize, Msb0>,
+    pub twos: BitVec<usize, Msb0>,
+    pub len: usize,
+}
+
+#[inline]
+fn ascii_to_packed(c: &u8) -> (u64, u64) {
+    match c {
+        b'T' | b't' => (0, 0),
+        b'A' | b'a' => (1, 1),
+        b'G' | b'g' => (1, 0),
+        b'C' | b'c' => (0, 1),
+        _ => (0, 0),
+    }
+}
+
+#[derive(Debug)]
+pub enum Base {
+    T = 0,
+    A = 3,
+    G = 1,
+    C = 2,
+}
+
+impl Base {
+    #[inline]
+    fn from_bools(one: bool, two: bool) -> Self {
+        match (one, two) {
+            (false, false) => Self::T,
+            (true, true) => Self::A,
+            (true, false) => Self::G,
+            (false, true) => Self::C,
+        }
+    }
+
+    #[inline]
+    fn one(&self) -> bool {
+        match self {
+            Self::A => true,
+            Self::G => true,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    fn two(&self) -> bool {
+        match self {
+            Self::A => true,
+            Self::C => true,
+            _ => false,
+        }
+    }
+}
+
+pub struct BaseRef<'a, M>
+where
+    M: Mutability,
+{
+    one: ManuallyDrop<BitRef<'a, M, usize, Msb0>>,
+    two: ManuallyDrop<BitRef<'a, M, usize, Msb0>>,
+    data: Base,
+}
+
+impl<'a, M> Deref for BaseRef<'a, M>
+where
+    M: Mutability,
+{
+    type Target = Base;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
+impl<'a> DerefMut for BaseRef<'a, Mut> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.data
+    }
+}
+
+impl<'a, M> Drop for BaseRef<'a, M>
+where
+    M: Mutability,
+{
+    #[inline]
+    fn drop(&mut self) {
+        if M::CONTAINS_MUTABILITY {
+            unsafe {
+                ManuallyDrop::<BitRef<'a, M, usize, Msb0>>::take(&mut self.one)
+                    .into_bitptr()
+                    .to_mut()
+                    .write(self.data.one());
+                ManuallyDrop::<BitRef<'a, M, usize, Msb0>>::take(&mut self.two)
+                    .into_bitptr()
+                    .to_mut()
+                    .write(self.data.two());
+            }
+        }
+    }
+}
+
+pub trait PackedSeqIndex<'a> {
+    type Immut;
+    type Mut;
+
+    fn get(self, seq: &'a PackedSeq) -> Option<Self::Immut>;
+    fn get_mut(self, seq: &'a mut PackedSeq) -> Option<Self::Mut>;
+
+    unsafe fn get_unchecked(self, seq: &'a PackedSeq) -> Self::Immut;
+    unsafe fn get_unchecked_mut(self, seq: &'a mut PackedSeq) -> Self::Mut;
+
+    fn index(self, seq: &'a PackedSeq) -> Self::Immut;
+    fn index_mut(self, seq: &'a mut PackedSeq) -> Self::Mut;
+}
+
+impl<'a> PackedSeqIndex<'a> for usize {
+    type Immut = BaseRef<'a, Const>;
+
+    type Mut = BaseRef<'a, Mut>;
+
+    #[inline]
+    fn get(self, seq: &'a PackedSeq) -> Option<Self::Immut> {
+        if self < seq.len {
+            Some(unsafe { PackedSeqIndex::get_unchecked(self, seq) })
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn get_mut(self, seq: &'a mut PackedSeq) -> Option<Self::Mut> {
+        if self < seq.len {
+            Some(unsafe { PackedSeqIndex::get_unchecked_mut(self, seq) })
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    unsafe fn get_unchecked(self, seq: &'a PackedSeq) -> Self::Immut {
+        let one = BitSliceIndex::<'a, usize, Msb0>::get_unchecked(self, &seq.ones);
+        let two = BitSliceIndex::<'a, usize, Msb0>::get_unchecked(self, &seq.twos);
+        let val = Base::from_bools(*one, *two);
+        BaseRef::<'a, Const> {
+            one: ManuallyDrop::new(one),
+            two: ManuallyDrop::new(two),
+            data: val,
+        }
+    }
+
+    #[inline]
+    unsafe fn get_unchecked_mut(self, seq: &'a mut PackedSeq) -> Self::Mut {
+        let one = BitSliceIndex::<'a, usize, Msb0>::get_unchecked_mut(self, &mut seq.ones);
+        let two = BitSliceIndex::<'a, usize, Msb0>::get_unchecked_mut(self, &mut seq.twos);
+        let val = Base::from_bools(*one, *two);
+        BaseRef::<'a, Mut> {
+            one: ManuallyDrop::new(one),
+            two: ManuallyDrop::new(two),
+            data: val,
+        }
+    }
+
+    #[inline]
+    fn index(self, seq: &'a PackedSeq) -> Self::Immut {
+        PackedSeqIndex::get(self, seq)
+            .unwrap_or_else(|| panic!("index {} out of bounds: {}", self, seq.len))
+    }
+
+    #[inline]
+    fn index_mut(self, seq: &'a mut PackedSeq) -> Self::Mut {
+        let len = seq.len;
+        PackedSeqIndex::get_mut(self, seq)
+            .unwrap_or_else(|| panic!("index {} out of bounds: {}", self, len))
+    }
+}
+
+struct SeqWindow {
+
+}
