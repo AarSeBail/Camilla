@@ -1,6 +1,5 @@
-use libcamilla::structures::sequence::read::ReadSeq;
-use std::hint::black_box;
-use libcamilla::structures::sequence::packed::PackedSeqIndex;
+use libcamilla::structures::sequence::{read::ReadSeq, storage::ReverseComplement, nucleotide::Nucleotide, packed::PackedSeq};
+use std::{hint::black_box, mem::size_of};
 
 fn main() {
     let mut seq = ReadSeq {
@@ -17,10 +16,28 @@ fn main() {
     println!("{}", seq.sequence);
 
     let bb = black_box(seq);
-    let res = bb.pack();
+    let res = PackedSeq::<usize>::from_read(&bb);
 
-    for i in 0..res.len {
-        print!("{:?}", *i.get(&res).unwrap());
+    for i in 0..res.len() {
+        print!("{:?}", res.read(i).unwrap());
+    }
+    println!("");
+
+    let mut res2 = res.reverse_complement();
+    for i in 0..res2.len() {
+        print!("{:?}", res2.read(i).unwrap());
+    }
+    println!("");
+    res2.push(Nucleotide::T);
+
+    for i in 0..res2.len() {
+        print!("{:?}", res2.read(i).unwrap());
+    }
+    println!("");
+
+    let res3 = res2.reverse_complement();
+    for i in 0..res3.len() {
+        print!("{:?}", res3.read(i).unwrap());
     }
     println!("");
 }

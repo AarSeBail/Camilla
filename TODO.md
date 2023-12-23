@@ -1,7 +1,7 @@
 Core Library Features
 - [x] PackedSeq Implementation
-- [ ] PackedSeq Slicing with SeqSlice
-- [ ] Rabin Fingerprinting on SeqSlice
+- [ ] PackedSeq Slicing with PackedSeqSlice
+- [ ] Rabin Fingerprinting on PackedSeqSlice
 - [ ] Bloom Filter
 - [ ] Bidirected Graphs
 - [ ] De Bruijn Graph Construction

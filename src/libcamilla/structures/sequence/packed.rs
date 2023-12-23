@@ -1,90 +1,180 @@
-use std::marker::PhantomData;
-use crate::structures::sequence::nucleotide::{Nucleotide, NucleotideRef};
-use bitvec::order::Msb0;
-use bitvec::ptr::BitRef;
-use bitvec::slice::{BitSlice, BitSliceIndex};
-use bitvec::vec::BitVec;
-use std::mem::ManuallyDrop;
-use std::ops::{Deref, DerefMut, Index, IndexMut};
-use wyz::{Const, Mut, Mutability};
+use super::{nucleotide::Nucleotide, read::ReadSeq, storage::{Storage, ReverseComplement}};
 
-pub struct PackedSeq {
-    pub(crate) ones: BitVec<usize, Msb0>,
-    pub(crate) twos: BitVec<usize, Msb0>,
-    pub len: usize,
+pub struct PackedSeq<T: Storage> {
+    storage: Vec<T>,
+    len: usize
 }
 
-pub trait PackedSeqIndex<'a> {
-    type Immut;
-    type Mut;
+impl<T> PackedSeq<T>
+where
+    T: Storage,
+{
+    pub fn new() -> Self {
+        Self {
+            storage: Vec::new(),
+            len: 0,
+        }
+    }
 
-    fn get(self, seq: &'a PackedSeq) -> Option<Self::Immut>;
-    fn get_mut(self, seq: &'a mut PackedSeq) -> Option<Self::Mut>;
+    pub fn with_capacity(n: usize) -> Self {
+        Self {
+            // Better than calculating directly,
+            // if in the future we would prefer a Storage
+            // implementation having infinite/variable capacity
+            storage: Vec::with_capacity(T::addr(n).0 + 1),
+            len: 0,
+        }
+    }
 
-    unsafe fn get_unchecked(self, seq: &'a PackedSeq) -> Self::Immut;
-    unsafe fn get_unchecked_mut(self, seq: &'a mut PackedSeq) -> Self::Mut;
+    pub fn from_read(read: &ReadSeq) -> Self {
+        let s = &read.sequence;
+        let mut res = Self::with_capacity(s.len());
+        let (slots, _) = T::addr(s.len() - 1);
+        res.storage.resize_with(slots+1, T::default);
+        let mut chunks = s.as_bytes().chunks_exact(T::CAPACITY);
+        for (i, chunk) in chunks.by_ref().enumerate() {
+            res.storage[i].write_chunk(chunk.iter().map(Nucleotide::from_ascii));
+        }
+        res.storage[slots].write_chunk(chunks.remainder().iter().map(Nucleotide::from_ascii));
+        res.len = s.len();
+        res
+    }
 
-    fn index(self, seq: &'a PackedSeq) -> Self::Immut;
-    fn index_mut(self, seq: &'a mut PackedSeq) -> Self::Mut;
-}
+    pub fn len(&self) -> usize {
+        self.len
+    }
 
-impl<'a> PackedSeqIndex<'a> for usize {
-    type Immut = NucleotideRef<'a, Const>;
+    pub fn read(&self, n: usize) -> Option<Nucleotide> {
+        if n < self.len {
+            let (slot, pos) = T::addr(T::reindex(self.len, n));
 
-    type Mut = NucleotideRef<'a, Mut>;
-
-    #[inline]
-    fn get(self, seq: &'a PackedSeq) -> Option<Self::Immut> {
-        if self < seq.len {
-            Some(unsafe { PackedSeqIndex::get_unchecked(self, seq) })
+            Some(self.storage[slot].read(pos))
         } else {
             None
         }
     }
 
-    #[inline]
-    fn get_mut(self, seq: &'a mut PackedSeq) -> Option<Self::Mut> {
-        if self < seq.len {
-            Some(unsafe { PackedSeqIndex::get_unchecked_mut(self, seq) })
-        } else {
-            None
+    pub fn write(&mut self, n: usize, value: Nucleotide) {
+        if n < self.len {
+            let (slot, pos) = T::addr(T::reindex(self.len, n));
+            self.storage[slot].write(pos, value);
         }
     }
 
-    #[inline]
-    unsafe fn get_unchecked(self, seq: &'a PackedSeq) -> Self::Immut {
-        let one = BitSliceIndex::<'a, usize, Msb0>::get_unchecked(self, &seq.ones);
-        let two = BitSliceIndex::<'a, usize, Msb0>::get_unchecked(self, &seq.twos);
-        let val = Nucleotide::from_bools(*one, *two);
-        NucleotideRef::<'a, Const> {
-            one: ManuallyDrop::new(one),
-            two: ManuallyDrop::new(two),
-            data: val,
+    pub fn iter(&self) -> PackedSeqIter<'_, T> {
+        PackedSeqIter {
+            seq: self,
+            index: 0,
         }
     }
 
-    #[inline]
-    unsafe fn get_unchecked_mut(self, seq: &'a mut PackedSeq) -> Self::Mut {
-        let one = BitSliceIndex::<'a, usize, Msb0>::get_unchecked_mut(self, &mut seq.ones);
-        let two = BitSliceIndex::<'a, usize, Msb0>::get_unchecked_mut(self, &mut seq.twos);
-        let val = Nucleotide::from_bools(*one, *two);
-        NucleotideRef::<'a, Mut> {
-            one: ManuallyDrop::new(one),
-            two: ManuallyDrop::new(two),
-            data: val,
+    pub fn extend<I: Iterator<Item=Nucleotide>>(&mut self, x: I){
+        for y in x {
+            self.push(y);
         }
     }
 
-    #[inline]
-    fn index(self, seq: &'a PackedSeq) -> Self::Immut {
-        PackedSeqIndex::get(self, seq)
-            .unwrap_or_else(|| panic!("index {} out of bounds: {}", self, seq.len))
+    pub fn push(&mut self, value: Nucleotide){
+        self.len += 1;
+        let (slot, pos) = T::addr(self.len-1);
+        if pos == 0 {
+            self.storage.push(T::default());
+        }
+        self.storage[slot].write(pos, value);
     }
 
     #[inline]
-    fn index_mut(self, seq: &'a mut PackedSeq) -> Self::Mut {
-        let len = seq.len;
-        PackedSeqIndex::get_mut(self, seq)
-            .unwrap_or_else(|| panic!("index {} out of bounds: {}", self, len))
+    pub fn reverse_complement(self) -> PackedSeq<ReverseComplement<T>> {
+        PackedSeq::<ReverseComplement<T>> {
+            // Noop?
+            storage: self.storage.into_iter().map(|x| x.into()).collect(),
+            len: self.len
+        }
     }
 }
+
+pub struct PackedSeqIter<'a, T>
+where
+    T: Storage,
+{
+    seq: &'a PackedSeq<T>,
+    index: usize,
+}
+
+impl<'a, T> Iterator for PackedSeqIter<'a, T>
+where
+    T: Storage,
+{
+    type Item = Nucleotide;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.index += 1;
+        self.seq.read(self.index - 1)
+    }
+}
+
+impl<'a, T> IntoIterator for &'a PackedSeq<T>
+where
+    T: Storage
+{
+    type Item = Nucleotide;
+
+    type IntoIter = PackedSeqIter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+#[derive(Clone)]
+pub struct PackedSeqSlice<'a, T>
+where
+    T: Storage
+{
+    pub seq: &'a PackedSeq<T>,
+    pub start: usize,
+    pub len: usize
+}
+
+// For integers it should be preferred to do this directly using pointer arithmetic
+// If repacking becomes common, this should be optimized
+macro_rules! extension_repack {
+    ($a:ty, $b:ty) => {
+        impl From<PackedSeq<$a>> for PackedSeq<$b> {
+            #[inline]
+            fn from(seq: PackedSeq<$a>) -> PackedSeq<$b> {
+                let mut storage = Vec::with_capacity(<$b>::addr(seq.len()).0 + 1);
+                storage.extend(seq.iter().map(|x| <$b>::from(x)));
+
+                Self {
+                    storage,
+                    len: seq.len(),
+                }
+            }
+        }
+    };
+}
+
+macro_rules! repack_nonbranching {
+    ($a:ty, $b:ty) => {
+        extension_repack!($a, $b);
+        extension_repack!($b, $a);
+    };
+    ($a:ty, $b:ty, $($rest:ty),+) => {
+        repack_nonbranching!($a, $b);
+        repack_nonbranching!($a, $($rest),*);
+    }
+}
+
+macro_rules! repack_by_extension {
+    ($a:ty, $b:ty) => {
+        repack_nonbranching!($a, $b);
+    };
+    ($a:ty, $b:ty, $($rest:ty),+) => {
+        repack_by_extension!($a, $b);
+        repack_nonbranching!($a, $($rest),*);
+        repack_by_extension!($b, $($rest),*);
+    }
+}
+
+repack_by_extension!(u8, u16, u32, u64, u128, usize, Nucleotide);
