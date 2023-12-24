@@ -3,25 +3,26 @@ use std::{hint::black_box, mem::size_of};
 
 fn main() {
     let mut seq = ReadSeq {
-        sequence: "TAGC".to_string(),
+        sequence: "G".to_string(),
         name: "".to_string(),
         separator: None,
         quality: None,
     };
 
-    seq.sequence.extend(['G'; 64].iter());
+    // seq.sequence.extend(['G'; 64].iter());
 
-    seq.sequence.extend(['T', 'A', 'T', 'G', 'A']);
+    // seq.sequence.extend(['T', 'A', 'T', 'G', 'A']);
 
-    println!("{}", seq.sequence);
+    // println!("{}", seq.sequence);
 
     let bb = black_box(seq);
-    let res = PackedSeq::<usize>::from_read(&bb);
+    let mut res = PackedSeq::<usize>::from_read(&bb);
 
     for i in 0..res.len() {
         print!("{:?}", res.read(i).unwrap());
     }
     println!("");
+    // res.push(Nucleotide::A);
 
     let mut res2 = res.reverse_complement();
     for i in 0..res2.len() {

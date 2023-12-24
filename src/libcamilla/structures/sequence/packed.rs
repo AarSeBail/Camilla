@@ -56,7 +56,7 @@ where
 
     pub fn write(&mut self, n: usize, value: Nucleotide) {
         if n < self.len {
-            let (slot, pos) = T::addr(T::reindex(self.len, n));
+            let (slot, pos) = T::addr(n);
             self.storage[slot].write(pos, value);
         }
     }
@@ -75,18 +75,18 @@ where
     }
 
     pub fn push(&mut self, value: Nucleotide){
+        let (_, pos) = T::addr(self.len);
         self.len += 1;
-        let (slot, pos) = T::addr(self.len-1);
         if pos == 0 {
             self.storage.push(T::default());
         }
-        self.storage[slot].write(pos, value);
+        self.write(self.len - 1, value);
     }
 
     #[inline]
     pub fn reverse_complement(self) -> PackedSeq<ReverseComplement<T>> {
         PackedSeq::<ReverseComplement<T>> {
-            // Noop?
+            // Noop
             storage: self.storage.into_iter().map(|x| x.into()).collect(),
             len: self.len
         }

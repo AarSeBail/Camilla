@@ -12,6 +12,7 @@ pub trait Storage: Default {
     fn read(&self, pos: usize) -> Nucleotide;
     fn clear(&mut self, pos: usize);
     fn write(&mut self, pos: usize, value: Nucleotide);
+    fn write_uncomplemented(&mut self, pos: usize, value: Nucleotide);
     fn reindex(len: usize, pos: usize) -> usize;
     fn write_chunk<I: Iterator<Item=Nucleotide>>(&mut self, data: I);
 }
@@ -43,6 +44,11 @@ macro_rules! storage_impl {
                 self.clear(pos);
                 let x: $t = value.into();
                 *self |= x << Self::CAPACITY*Self::WIDTH - Self::WIDTH - Self::WIDTH * pos;
+            }
+            
+            #[inline]
+            fn write_uncomplemented(&mut self, pos: usize, value: Nucleotide) {
+                Self::write(self, pos, value);
             }
 
             #[inline]
@@ -93,6 +99,12 @@ impl Storage for Nucleotide {
     fn write(&mut self, _spos: usize, value: Nucleotide) {
         *self = value;
     }
+
+    #[inline]
+    fn write_uncomplemented(&mut self, pos: usize, value: Nucleotide) {
+        Self::write(self, pos, value);
+    }
+
     #[inline(always)]
     fn reindex(_len: usize, n: usize) -> usize {
         n
@@ -151,6 +163,11 @@ where
     #[inline]
     fn write(&mut self, pos: usize, value: Nucleotide) {
         self.internal.write(pos, value.complement());
+    }
+
+    #[inline]
+    fn write_uncomplemented(&mut self, pos: usize, value: Nucleotide) {
+        self.internal.write(pos, value);
     }
 
     #[inline]
