@@ -23,7 +23,7 @@ impl Nucleotide {
             Self::T => Self::A,
             Self::A => Self::T,
             Self::G => Self::C,
-            Self::C => Self::G
+            Self::C => Self::G,
         }
     }
 }

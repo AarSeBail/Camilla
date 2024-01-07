@@ -1,44 +1,34 @@
-use libcamilla::structures::sequence::{read::ReadSeq, storage::ReverseComplement, nucleotide::Nucleotide, packed::PackedSeq};
+use libcamilla::filters::blocks::blanket::BlanketBBFBlock;
+use libcamilla::filters::bloom::BBFilter;
+use libcamilla::structures::sequence::complement::{Complement, Forward, Identity, Reverse};
+use libcamilla::structures::sequence::{nucleotide::Nucleotide, packed::PackedSeq, read::ReadSeq};
 use std::{hint::black_box, mem::size_of};
 
 fn main() {
     let mut seq = ReadSeq {
-        sequence: "G".to_string(),
+        sequence: "GTA".to_string(),
         name: "".to_string(),
         separator: None,
         quality: None,
     };
 
-    // seq.sequence.extend(['G'; 64].iter());
+    seq.sequence.extend(['G'; 4096].iter());
 
-    // seq.sequence.extend(['T', 'A', 'T', 'G', 'A']);
+    seq.sequence.extend(['T', 'A', 'T', 'G', 'A']);
 
     // println!("{}", seq.sequence);
 
     let bb = black_box(seq);
-    let mut res = PackedSeq::<usize>::from_read(&bb);
+    let mut res = bb.pack::<u8>();
 
-    for i in 0..res.len() {
-        print!("{:?}", res.read(i).unwrap());
-    }
-    println!("");
-    // res.push(Nucleotide::A);
+    let filter = BBFilter::<BlanketBBFBlock>::new(100, 24);
 
-    let mut res2 = res.reverse_complement();
-    for i in 0..res2.len() {
-        print!("{:?}", res2.read(i).unwrap());
-    }
-    println!("");
-    res2.push(Nucleotide::T);
+    filter.insert_kmers(&res, 3);
 
-    for i in 0..res2.len() {
-        print!("{:?}", res2.read(i).unwrap());
-    }
-    println!("");
-
-    let res3 = res2.reverse_complement();
-    for i in 0..res3.len() {
-        print!("{:?}", res3.read(i).unwrap());
-    }
-    println!("");
+    println!("{}", filter.contains_kmer(res.slice(1, 5)));
+    println!(
+        "{} {}",
+        res.slice(res.len() - 3, 3),
+        filter.contains_kmer(res.slice(res.len() - 3, 3))
+    );
 }

@@ -1,3 +1,3 @@
 pub mod collection;
-pub mod graph;
+pub mod bigraph;
 pub mod sequence;

@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 bitvec = "1.0.1"
 rand = { version = "0.8.5", features = ["std_rng"] }
+static_assertions = "1.1.0"
 wyz = "0.5"
 
 [profile.release]
