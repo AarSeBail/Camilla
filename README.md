@@ -1,2 +1,2 @@
 # Camilla
-Library and ~~runtime~~ (not done (yet?)) for read assembly. Abandoned and being rewritten.
+Library for de novo sequence assembly. Abandoned and being rewritten.
